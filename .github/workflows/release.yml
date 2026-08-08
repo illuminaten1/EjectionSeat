@@ -63,5 +63,5 @@ jobs:
         run: |
           gh release create "${{ steps.version.outputs.version }}" EjectionSeat.zip \
             --title "${{ steps.version.outputs.version }}" \
-            --generate-release-notes \
+            --generate-notes \
             --target "${{ github.sha }}"
