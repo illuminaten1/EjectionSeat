@@ -1,0 +1,67 @@
+name: Release
+
+# Builds EjectionSeat.app and publishes it as a GitHub Release.
+#
+# Trigger it either by pushing a version tag:
+#   git tag 1.5.2 && git push origin 1.5.2
+# or manually from the Actions tab (workflow_dispatch), entering a version.
+#
+# No Apple Developer account is needed: the app is ad-hoc signed ("Sign to
+# Run Locally"), same as the project's local build settings. Downloaders
+# will need to right-click > Open the first time (Gatekeeper), since the
+# build isn't notarized.
+
+on:
+  push:
+    tags:
+      - "*.*.*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release (e.g. 1.5.2)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: macos-14
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "version=${{ github.event.inputs.version }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Stamp app version
+        run: |
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${{ steps.version.outputs.version }}" EjectionSeat/Info.plist
+
+      - name: Build (ad-hoc signed, no certificate required)
+        run: |
+          xcodebuild -project EjectionSeat.xcodeproj -scheme EjectionSeat -configuration Release \
+            -derivedDataPath build \
+            CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY="-" CODE_SIGNING_REQUIRED=YES CODE_SIGNING_ALLOWED=YES \
+            DEVELOPMENT_TEAM="" PROVISIONING_PROFILE_SPECIFIER="" \
+            clean build
+
+      - name: Zip app
+        run: |
+          ditto -c -k --sequesterRsrc --keepParent \
+            "build/Build/Products/Release/EjectionSeat.app" EjectionSeat.zip
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ steps.version.outputs.version }}" EjectionSeat.zip \
+            --title "${{ steps.version.outputs.version }}" \
+            --generate-release-notes \
+            --target "${{ github.sha }}"
