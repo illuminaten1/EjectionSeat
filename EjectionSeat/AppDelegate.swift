@@ -7,16 +7,21 @@
 //
 
 import Cocoa
+import UserNotifications
 
 @NSApplicationMain
-class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSUserNotificationCenterDelegate, NSWindowDelegate {
-    
+class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, UNUserNotificationCenterDelegate, NSWindowDelegate {
+
     let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     let menu: NSMenu = NSMenu()
     var aboutWindow: NSWindow?
     var lastVolume: String = ""
     let version: String = Bundle.main.infoDictionary?["CFBundleVersion"] as! String
-    
+
+    private let successCategoryID = "EJECT_SUCCESS"
+    private let failureCategoryID = "EJECT_FAILURE"
+    private let ejectActionID = "EJECT_RETRY"
+
     func delay(_ seconds: Int, block: @escaping () -> Void){
         DispatchQueue.main.asyncAfter(deadline: .now() + .seconds(seconds), execute: block)
     }
@@ -28,13 +33,27 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSUserNotifi
     
     func applicationDidFinishLaunching(_ aNotification: Notification) {
         //statusItem.title = "EjectionSeat"
-        statusItem.button?.image = NSImage(named: NSImage.Name("USBIcon"))
+        let symbolConfig = NSImage.SymbolConfiguration(pointSize: 14, weight: .regular)
+        statusItem.button?.image = NSImage(systemSymbolName: "eject.fill", accessibilityDescription: "Eject")?.withSymbolConfiguration(symbolConfig)
         statusItem.button?.image?.isTemplate = true
         statusItem.menu = menu
         statusItem.menu?.delegate = self
         makeAboutWindow()
+        configureNotifications()
     }
-    
+
+    func configureNotifications() {
+        let center = UNUserNotificationCenter.current()
+        center.delegate = self
+
+        let ejectAction = UNNotificationAction(identifier: ejectActionID, title: "Eject", options: [])
+        let failureCategory = UNNotificationCategory(identifier: failureCategoryID, actions: [ejectAction], intentIdentifiers: [], options: [])
+        let successCategory = UNNotificationCategory(identifier: successCategoryID, actions: [], intentIdentifiers: [], options: [])
+        center.setNotificationCategories([successCategory, failureCategory])
+
+        center.requestAuthorization(options: [.alert, .sound]) { _, _ in }
+    }
+
     func makeMenu() {
         menu.removeAllItems()
         if let subMenu = makeSubMenu() {
@@ -55,17 +74,17 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSUserNotifi
     
     func makeAboutWindow(){
         let aboutView = NSView(frame: NSMakeRect(0, 0, 192, 256))
-        let aboutImage = NSImageView(image: NSImage(named: NSImage.Name("AppIcon"))!)
+        let aboutImage = NSImageView(image: NSApplication.shared.applicationIconImage)
         let aboutTextTitle = NSTextView(frame: NSMakeRect(0, 0, 192, 16))
         let aboutTextBody = NSTextView(frame: NSMakeRect(0, 0, 192, 12))
-        
+
         aboutView.addSubview(aboutImage)
         aboutView.addSubview(aboutTextTitle)
         aboutView.addSubview(aboutTextBody)
-        
-        
-        aboutImage.setFrameSize(NSSize(width: 192, height: 128))
-        aboutImage.setFrameOrigin(NSPoint(x:0,y:96))
+
+
+        aboutImage.setFrameSize(NSSize(width: 128, height: 128))
+        aboutImage.setFrameOrigin(NSPoint(x:32,y:96))
         aboutImage.imageAlignment = NSImageAlignment.alignCenter
         
         aboutTextTitle.setFrameOrigin(NSPoint(x:0,y:60))
@@ -153,44 +172,43 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSUserNotifi
     }
     
     func showNotificationSuccess() {
-        let notification = NSUserNotification()
-        notification.identifier = "Success \(lastVolume)"
-        notification.title = "\(lastVolume)"
-        notification.informativeText = "Ejected safely!"
+        let content = UNMutableNotificationContent()
+        content.title = lastVolume
+        content.body = "Ejected safely!"
+        content.categoryIdentifier = successCategoryID
         play("Success")
-        notification.hasActionButton = false
-        notification.otherButtonTitle = "Dismiss"
-        NSUserNotificationCenter.default.delegate = self
-        NSUserNotificationCenter.default.deliver(notification)
+        deliver(content, identifier: "Success \(lastVolume)", removeAfter: 3)
     }
-    
+
     func showNotificationFailure() {
-        let notification = NSUserNotification()
-        notification.identifier = "Failure \(lastVolume)"
-        notification.title = "\(lastVolume)"
-        notification.informativeText = "Failed to eject."
+        let content = UNMutableNotificationContent()
+        content.title = lastVolume
+        content.body = "Failed to eject."
+        content.categoryIdentifier = failureCategoryID
         play("Failure")
-        notification.hasActionButton = true
-        notification.otherButtonTitle = "Dismiss"
-        notification.actionButtonTitle = "Eject"
-        NSUserNotificationCenter.default.delegate = self
-        NSUserNotificationCenter.default.deliver(notification)
+        deliver(content, identifier: "Failure \(lastVolume)", removeAfter: 60)
     }
-    
-    func userNotificationCenter(_ center: NSUserNotificationCenter, didDeliver notification: NSUserNotification) {
-        notification.hasActionButton ?
-            delay(60){NSUserNotificationCenter.default.removeDeliveredNotification(notification)} :
-            delay(3){NSUserNotificationCenter.default.removeDeliveredNotification(notification)}
+
+    private func deliver(_ content: UNMutableNotificationContent, identifier: String, removeAfter seconds: Int) {
+        let request = UNNotificationRequest(identifier: identifier, content: content, trigger: nil)
+        UNUserNotificationCenter.current().add(request)
+        delay(seconds) {
+            UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: [identifier])
+        }
     }
-    
-    func userNotificationCenter(_ center: NSUserNotificationCenter, didActivate notification: NSUserNotification) {
-        eject(NSMenuItem(title: notification.title!, action: nil, keyEquivalent: ""))
+
+    func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification, withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+        completionHandler([.banner, .sound])
     }
-    
-    func userNotificationCenter(_ center: NSUserNotificationCenter, shouldPresent notification: NSUserNotification) -> Bool {
-        return true
+
+    func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse, withCompletionHandler completionHandler: @escaping () -> Void) {
+        if response.actionIdentifier == ejectActionID || response.actionIdentifier == UNNotificationDefaultActionIdentifier {
+            let volume = response.notification.request.content.title
+            eject(NSMenuItem(title: volume, action: nil, keyEquivalent: ""))
+        }
+        completionHandler()
     }
-    
+
     func getURLList()->[URL]? {
         let keys: [URLResourceKey] = [.volumeNameKey, .volumeIsRemovableKey, .volumeIsEjectableKey]
         guard var urls = FileManager().mountedVolumeURLs(includingResourceValuesForKeys: keys, options: []) else {
