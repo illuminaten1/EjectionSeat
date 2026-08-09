@@ -8,6 +8,7 @@
 
 import Cocoa
 import UserNotifications
+import ServiceManagement
 
 @NSApplicationMain
 class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, UNUserNotificationCenterDelegate, NSWindowDelegate {
@@ -15,30 +16,35 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, UNUserNotifi
     let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     let menu: NSMenu = NSMenu()
     var aboutWindow: NSWindow?
+    var preferencesWindow: NSWindow?
     var lastVolume: String = ""
-    let version: String = Bundle.main.infoDictionary?["CFBundleVersion"] as! String
+    let version: String = (Bundle.main.infoDictionary?["CFBundleVersion"] as? String) ?? "?"
 
     private let successCategoryID = "EJECT_SUCCESS"
     private let failureCategoryID = "EJECT_FAILURE"
     private let ejectActionID = "EJECT_RETRY"
+    private let playSoundsKey = "PlaySounds"
 
     func delay(_ seconds: Int, block: @escaping () -> Void){
         DispatchQueue.main.asyncAfter(deadline: .now() + .seconds(seconds), execute: block)
     }
     
     func play(_ name: String){
+        guard UserDefaults.standard.bool(forKey: playSoundsKey) else { return }
         let sound = NSSound(named: NSSound.Name(name))
         sound?.play()
     }
-    
+
     func applicationDidFinishLaunching(_ aNotification: Notification) {
         //statusItem.title = "EjectionSeat"
+        UserDefaults.standard.register(defaults: [playSoundsKey: true])
         let symbolConfig = NSImage.SymbolConfiguration(pointSize: 14, weight: .regular)
         statusItem.button?.image = NSImage(systemSymbolName: "eject.fill", accessibilityDescription: "Eject")?.withSymbolConfiguration(symbolConfig)
         statusItem.button?.image?.isTemplate = true
         statusItem.menu = menu
         statusItem.menu?.delegate = self
         makeAboutWindow()
+        makePreferencesWindow()
         configureNotifications()
     }
 
@@ -56,16 +62,47 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, UNUserNotifi
 
     func makeMenu() {
         menu.removeAllItems()
-        if let subMenu = makeSubMenu() {
+        if let urls = getURLList(), urls.count > 0 {
             menu.addItem(NSMenuItem(title: "Eject All", action: #selector(AppDelegate.ejectAll(_:)), keyEquivalent: "e"))
-            menu.addItem(NSMenuItem(title: "Eject", action: nil, keyEquivalent: ""))
-            menu.setSubmenu(subMenu, for: (menu.item(withTitle: "Eject"))!)
+            menu.addItem(NSMenuItem.separator())
+            let entries = urls
+                .map { (title: $0.pathComponents[$0.pathComponents.endIndex-1], url: $0) }
+                .sorted { $0.title.caseInsensitiveCompare($1.title) == .orderedAscending }
+            for (index, entry) in entries.enumerated() {
+                // Only digits 1-9 make valid single-character key equivalents.
+                let keyEquivalent = index < 9 ? "\(index + 1)" : ""
+                let item = NSMenuItem(title: entry.title, action: #selector(AppDelegate.eject(_:)), keyEquivalent: keyEquivalent)
+                item.representedObject = entry.url
+                menu.addItem(item)
+            }
         } else {
             menu.addItem(NSMenuItem(title: "Nothing to eject", action: nil, keyEquivalent: ""))
         }
         menu.addItem(NSMenuItem.separator())
         menu.addItem(NSMenuItem(title: "About", action: #selector(AppDelegate.aboutWindowDisplay(_:)), keyEquivalent: "a"))
+        menu.addItem(NSMenuItem(title: "Preferences…", action: #selector(AppDelegate.preferencesWindowDisplay(_:)), keyEquivalent: ","))
+        addLaunchAtLoginMenuItem()
         menu.addItem(NSMenuItem(title: "Quit", action: #selector(AppDelegate.quit(_:)), keyEquivalent: "q"))
+    }
+
+    private func addLaunchAtLoginMenuItem() {
+        guard #available(macOS 13.0, *) else { return }
+        let item = NSMenuItem(title: "Launch at Login", action: #selector(AppDelegate.toggleLaunchAtLogin(_:)), keyEquivalent: "")
+        item.state = SMAppService.mainApp.status == .enabled ? .on : .off
+        menu.addItem(item)
+    }
+
+    @available(macOS 13.0, *)
+    @objc func toggleLaunchAtLogin(_ sender: NSMenuItem) {
+        do {
+            if SMAppService.mainApp.status == .enabled {
+                try SMAppService.mainApp.unregister()
+            } else {
+                try SMAppService.mainApp.register()
+            }
+        } catch {
+            NSLog("EjectionSeat: failed to toggle Launch at Login — \(error.localizedDescription)")
+        }
     }
     
     func menuNeedsUpdate(_ menu: NSMenu) {
@@ -114,61 +151,81 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, UNUserNotifi
         aboutWindow?.cascadeTopLeft(from: NSEvent.mouseLocation)
         aboutWindow?.orderFrontRegardless()
     }
-    
-    func makeSubMenu() -> NSMenu? {
-        guard let urls = getURLList(), urls.count > 0 else { return nil }
-        let subMenu = NSMenu()
-        var titles: [String] = []
-        for url in urls {
-            titles.append(url.pathComponents[url.pathComponents.endIndex-1])
-        }
-        titles = titles.sorted{$0.caseInsensitiveCompare($1) == .orderedAscending}
-        var numKey = 0
-        for title in titles {
-            numKey += 1
-            subMenu.addItem(NSMenuItem(title: title, action: #selector(AppDelegate.eject(_:)), keyEquivalent: "\(numKey)"))
-        }
-        return subMenu
+
+    func makePreferencesWindow() {
+        let prefsView = NSView(frame: NSMakeRect(0, 0, 240, 60))
+
+        let soundCheckbox = NSButton(checkboxWithTitle: "Play sound on eject", target: self, action: #selector(AppDelegate.togglePlaySounds(_:)))
+        soundCheckbox.setFrameOrigin(NSPoint(x: 20, y: 20))
+        soundCheckbox.sizeToFit()
+        soundCheckbox.state = UserDefaults.standard.bool(forKey: playSoundsKey) ? .on : .off
+        prefsView.addSubview(soundCheckbox)
+
+        preferencesWindow = NSWindow(contentRect: prefsView.frame, styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        preferencesWindow?.contentView = prefsView
+        preferencesWindow?.isReleasedWhenClosed = false
+        preferencesWindow?.title = "Preferences"
     }
-    
+
+    @objc func preferencesWindowDisplay(_ sender: NSMenuItem) {
+        preferencesWindow?.cascadeTopLeft(from: NSEvent.mouseLocation)
+        preferencesWindow?.orderFrontRegardless()
+    }
+
+    @objc func togglePlaySounds(_ sender: NSButton) {
+        UserDefaults.standard.set(sender.state == .on, forKey: playSoundsKey)
+    }
+
     @objc func quit(_ sender: NSMenuItem) {
         NSApplication.shared.terminate(self)
     }
     
     @objc func eject(_ sender: NSMenuItem) {
-        guard let urls = getURLList(), urls.count > 0 else { return }
-        for url in urls {
-            if url.pathComponents[url.pathComponents.endIndex-1] == sender.title {
-                lastVolume = sender.title
-                guard (try? NSWorkspace().unmountAndEjectDevice(at: url)) != nil else {
-                    showNotificationFailure()
-                    return
-                }
-                showNotificationSuccess()
-            }
+        guard let url = sender.representedObject as? URL else { return }
+        ejectVolume(at: url)
+    }
+
+    @discardableResult
+    private func ejectVolume(at url: URL) -> Bool {
+        lastVolume = url.pathComponents[url.pathComponents.endIndex-1]
+        do {
+            try NSWorkspace().unmountAndEjectDevice(at: url)
+            showNotificationSuccess()
+            return true
+        } catch {
+            showNotificationFailure(url: url, error: error)
+            return false
         }
     }
-    
+
     @objc func ejectAll(_ sender: NSMenuItem) {
-        var hideError = true
-        var keepGoing = true
-        while keepGoing {
-            var anySuccess = false
-            guard let urls = getURLList(), urls.count > 0 else { return }
-            for url in urls {
-                lastVolume = url.pathComponents[url.pathComponents.endIndex-1]
-                guard (try? NSWorkspace().unmountAndEjectDevice(at: url)) != nil else {
-                    if !hideError {
-                        showNotificationFailure()
-                    }
-                    continue
-                }
-                showNotificationSuccess()
-                anySuccess = true
-            }
-            keepGoing = hideError
-            hideError = anySuccess
+        guard let urls = getURLList(), urls.count > 0 else { return }
+        // First pass: try everything quietly — some failures are transient
+        // (e.g. a volume briefly busy) and clear up on a second attempt.
+        let stillMounted = attemptEject(urls, reportFailures: false)
+        // Second pass: retry only what's left, and this time report failures.
+        if !stillMounted.isEmpty {
+            attemptEject(stillMounted, reportFailures: true)
         }
+    }
+
+    /// Attempts to eject each URL, returning those that failed.
+    @discardableResult
+    private func attemptEject(_ urls: [URL], reportFailures: Bool) -> [URL] {
+        var failedURLs: [URL] = []
+        for url in urls {
+            lastVolume = url.pathComponents[url.pathComponents.endIndex-1]
+            do {
+                try NSWorkspace().unmountAndEjectDevice(at: url)
+                showNotificationSuccess()
+            } catch {
+                failedURLs.append(url)
+                if reportFailures {
+                    showNotificationFailure(url: url, error: error)
+                }
+            }
+        }
+        return failedURLs
     }
     
     func showNotificationSuccess() {
@@ -180,11 +237,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, UNUserNotifi
         deliver(content, identifier: "Success \(lastVolume)", removeAfter: 3)
     }
 
-    func showNotificationFailure() {
+    func showNotificationFailure(url: URL, error: Error? = nil) {
         let content = UNMutableNotificationContent()
         content.title = lastVolume
-        content.body = "Failed to eject."
+        content.body = error?.localizedDescription ?? "Failed to eject."
         content.categoryIdentifier = failureCategoryID
+        content.userInfo = ["url": url.absoluteString]
         play("Failure")
         deliver(content, identifier: "Failure \(lastVolume)", removeAfter: 60)
     }
@@ -203,24 +261,23 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, UNUserNotifi
 
     func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse, withCompletionHandler completionHandler: @escaping () -> Void) {
         if response.actionIdentifier == ejectActionID || response.actionIdentifier == UNNotificationDefaultActionIdentifier {
-            let volume = response.notification.request.content.title
-            eject(NSMenuItem(title: volume, action: nil, keyEquivalent: ""))
+            if let urlString = response.notification.request.content.userInfo["url"] as? String,
+               let url = URL(string: urlString) {
+                ejectVolume(at: url)
+            }
         }
         completionHandler()
     }
 
-    func getURLList()->[URL]? {
+    func getURLList() -> [URL]? {
         let keys: [URLResourceKey] = [.volumeNameKey, .volumeIsRemovableKey, .volumeIsEjectableKey]
-        guard var urls = FileManager().mountedVolumeURLs(includingResourceValuesForKeys: keys, options: []) else {
+        guard let urls = FileManager().mountedVolumeURLs(includingResourceValuesForKeys: keys, options: []) else {
             return nil
         }
-        for url in urls {
+        return urls.filter { url in
             let components = url.pathComponents
-            if components.count < 2 || components[1] != "Volumes"{
-                urls.remove(at: urls.index(of: url)!)
-            }
+            return components.count >= 2 && components[1] == "Volumes"
         }
-        return urls;
     }
 }
 
