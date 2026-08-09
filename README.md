@@ -6,19 +6,23 @@ EjectionSeat vit discrètement dans la barre de menu et permet d'éjecter en un 
 
 ## Fonctionnalités
 
-- **Éjection en un clic** : la liste des volumes montés apparaît dans le menu, cliquez pour éjecter.
-- **"Eject All"** (`⌘E`) pour tout éjecter d'un coup.
-- **Notifications** de succès ou d'échec, avec un bouton pour retenter l'éjection directement depuis la notification.
+- **Éjection en un clic** : la liste des volumes montés apparaît directement dans le menu principal (plus de sous-menu), cliquez pour éjecter.
+- **"Eject All"** (`⌘E`) pour tout éjecter d'un coup, avec une nouvelle tentative automatique et silencieuse en cas d'échec transitoire.
+- **Notifications** de succès ou d'échec — le message d'erreur détaillé de macOS est affiché en cas de problème — avec un bouton pour retenter l'éjection directement depuis la notification.
+- **Préférences** : possibilité de couper le son joué à l'éjection.
+- **Lancement au démarrage** : activable directement depuis le menu (macOS 13 ou plus récent).
 - **Icône native** (symbole système "eject"), fidèle au design de macOS et lisible en clair comme en sombre.
 - Application légère, sans Dock icon (`LSUIElement`), qui ne fait qu'une chose.
 
 ## Prérequis
 
-macOS 11 (Big Sur) ou plus récent.
+macOS 11 (Big Sur) ou plus récent. L'option "Lancement au démarrage" nécessite macOS 13 (Ventura) ou plus récent.
 
 ## Installation
 
-Ce fork n'a pas encore de release packagée ; pour l'instant, il faut compiler depuis les sources avec Xcode :
+Téléchargez la dernière version packagée depuis la page [Releases](https://github.com/illuminaten1/EjectionSeat/releases/latest) de ce dépôt, dézippez `EjectionSeat.app` et lancez-le. L'app n'étant pas notariée, il faudra faire un clic droit > Ouvrir la première fois (Gatekeeper).
+
+Vous pouvez aussi compiler depuis les sources avec Xcode :
 
 ```bash
 git clone https://github.com/illuminaten1/EjectionSeat.git
@@ -27,10 +31,8 @@ open EjectionSeat.xcodeproj
 ```
 Puis `Product > Run` dans Xcode.
 
-Des builds prêts à l'emploi du projet original sont disponibles [ici](https://github.com/pilotchute/EjectionSeat/releases/latest).
-
 ## Crédits
 
-Ce dépôt est un fork du projet original [EjectionSeat](https://github.com/pilotchute/EjectionSeat) créé par **Alea Kootz**, avec quelques mises à jour (icône, notifications modernisées, cible macOS relevée).
+Ce dépôt est un fork du projet original [EjectionSeat](https://github.com/pilotchute/EjectionSeat) créé par **Alea Kootz**, avec quelques mises à jour (icône, notifications modernisées, menu simplifié, préférences, lancement au démarrage, cible macOS relevée).
 
 Distribué sous licence [GPLv3](LICENSE).
